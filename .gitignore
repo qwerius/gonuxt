@@ -1,0 +1,12 @@
+# Binary output
+/bin/
+/tmp/
+
+# Environment files
+*.env
+
+# Vendor (jika ada)
+/vendor/
+
+# OS files
+.DS_Store
