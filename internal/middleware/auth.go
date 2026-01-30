@@ -8,24 +8,33 @@ import (
 )
 
 func AuthRequired(c *fiber.Ctx) error {
-	authHeader := c.Get("Authorization") // ambil header Authorization
-	if authHeader == "" {
+	// 1. coba ambil dari header
+	authHeader := c.Get("Authorization")
+
+	var token string
+
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"status":  "error",
+				"message": "Authorization header format must be Bearer {token}",
+			})
+		}
+		token = parts[1]
+	} else {
+		// 2. kalau header kosong, ambil dari cookie
+		token = c.Cookies("access_token")
+	}
+
+	if token == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"status":  "error",
-			"message": "Authorization header is required",
+			"message": "token is required",
 		})
 	}
 
-	// format "Bearer <token>"
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"status":  "error",
-			"message": "Authorization header format must be Bearer {token}",
-		})
-	}
-
-	userID, err := utils.ValidateAccessToken(parts[1])
+	userID, err := utils.ValidateAccessToken(token)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"status":  "error",
@@ -33,7 +42,6 @@ func AuthRequired(c *fiber.Ctx) error {
 		})
 	}
 
-	// simpan userID di locals supaya handler bisa pakai
 	c.Locals("user_id", userID)
 	return c.Next()
 }
