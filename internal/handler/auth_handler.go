@@ -1,3 +1,4 @@
+// Package handler auth, lengkap dengan captcha di login, register, forgot-password
 package handler
 
 import (
@@ -7,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/qwerius/gonuxt/internal/middleware"
+	"github.com/qwerius/gonuxt/internal/store"
 	"github.com/qwerius/gonuxt/internal/utils"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,14 +26,18 @@ func NewAuthHandler(db *sql.DB) *AuthHandler {
 
 // RegisterRequest payload
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email         string `json:"email"`
+	Password      string `json:"password"`
+	CaptchaID     string `json:"captcha_id"`
+	CaptchaAnswer string `json:"captcha_answer"`
 }
 
 // LoginRequest payload
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email         string `json:"email"`
+	Password      string `json:"password"`
+	CaptchaID     string `json:"captcha_id"`
+	CaptchaAnswer string `json:"captcha_answer"`
 }
 
 // Register user baru
@@ -43,6 +50,16 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return utils.Error(c, fiber.StatusBadRequest, "Invalid request body: must be valid JSON")
 	}
+
+	// ===== Tambahkan verifikasi captcha di sini =====
+	if body.CaptchaID == "" || body.CaptchaAnswer == "" {
+		return utils.Error(c, fiber.StatusBadRequest, "Captcha is required")
+	}
+
+	if !store.Store.Verify(body.CaptchaID, body.CaptchaAnswer) {
+		return utils.Error(c, fiber.StatusBadRequest, "Captcha salah atau kadaluarsa")
+	}
+	// =================================================
 
 	if body.Email == "" {
 		return utils.Error(c, fiber.StatusBadRequest, "Email is required")
@@ -88,6 +105,16 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return utils.Error(c, fiber.StatusBadRequest, "Request body is required")
 	}
+
+	// ===== Tambahkan verifikasi captcha di sini =====
+	if body.CaptchaID == "" || body.CaptchaAnswer == "" {
+		return utils.Error(c, fiber.StatusBadRequest, "Captcha is required")
+	}
+
+	if !store.Store.Verify(body.CaptchaID, body.CaptchaAnswer) {
+		return utils.Error(c, fiber.StatusBadRequest, "Captcha salah atau kadaluarsa")
+	}
+	// =================================================
 
 	if body.Email == "" {
 		return utils.Error(c, fiber.StatusBadRequest, "Email is required")
@@ -146,6 +173,23 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		Secure:   false,            // Set true jika menggunakan HTTPS di production */
 	})
 
+	// Generate CSRF token setelah cookie auth
+	csrfToken, err := middleware.GenerateCSRFToken()
+	if err != nil {
+		log.Printf("Login: failed to generate CSRF token: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "Failed to create CSRF token")
+	}
+
+	// Set CSRF token cookie (bisa dibaca frontend)
+	c.Cookie(&fiber.Cookie{
+		Name:     middleware.CSRFCookieName,
+		Value:    csrfToken,
+		Path:     "/",
+		HTTPOnly: false, // frontend perlu baca
+		SameSite: "Lax",
+		Secure:   false, // true jika production
+	})
+
 	// Response success (tanpa token di body)
 	return utils.SuccessMessage(c, "Login successful", map[string]interface{}{
 		"user": map[string]interface{}{
@@ -155,7 +199,6 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	}, nil)
 }
 
-// Refresh token
 func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 	refreshToken := c.Cookies("refresh_token")
 	if refreshToken == "" {
@@ -177,6 +220,13 @@ func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 		return utils.Error(c, fiber.StatusInternalServerError, "Failed to create refresh token")
 	}
 
+	/// Generate new CSRF token
+	csrfToken, err := middleware.GenerateCSRFToken()
+	if err != nil {
+		log.Printf("RefreshToken: failed to generate CSRF token: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "Failed to create CSRF token")
+	}
+
 	// Update cookies
 	c.Cookie(&fiber.Cookie{
 		Name:     "access_token",
@@ -194,10 +244,20 @@ func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 		MaxAge:   7 * 24 * 60 * 60,
 	})
 
+	// Set CSRF token cookie (bisa dibaca frontend)
+	c.Cookie(&fiber.Cookie{
+		Name:     middleware.CSRFCookieName,
+		Value:    csrfToken,
+		Path:     "/",
+		HTTPOnly: false, // frontend perlu baca
+		SameSite: "Lax",
+		Secure:   false, // true jika production
+	})
+
 	return utils.SuccessMessage(c, "Token refreshed successfully", nil, nil)
 }
 
-// Logout
+// Logout digunakan untuk endpoint logout
 func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	// Clear cookies
 	c.Cookie(&fiber.Cookie{
@@ -213,6 +273,15 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 		Value:    "",
 		HTTPOnly: true,
 		Path:     "/",
+		MaxAge:   -1,
+	})
+
+	// Clear CSRF token
+	c.Cookie(&fiber.Cookie{
+		Name:     middleware.CSRFCookieName,
+		Value:    "",
+		Path:     "/",
+		HTTPOnly: false, // karena sebelumnya bisa dibaca frontend
 		MaxAge:   -1,
 	})
 

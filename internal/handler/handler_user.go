@@ -113,7 +113,7 @@ func (h *UserHandler) GetAllUsers(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "List users retrieved successfully", items, meta, links)
 }
 
-// GET /users/:id
+// GetUserByID untuk mendapatkan user berdasarkan id usernya
 func (h *UserHandler) GetUserByID(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -147,7 +147,7 @@ func (h *UserHandler) GetUserByID(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "User retrieved successfully", user, nil, nil)
 }
 
-// POST /users
+// CreateUserRequest struct membuat user.
 type CreateUserRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"` // plain text from client
@@ -184,7 +184,7 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "User created successfully", map[string]int{"id": id}, nil, nil)
 }
 
-// PUT /users/:id
+// UpdateUserRequest untuk mengubah user berdasarkan id nya.
 type UpdateUserRequest struct {
 	Email    *string `json:"email"`
 	Password *string `json:"password"` // plain text from client
@@ -245,7 +245,7 @@ func (h *UserHandler) UpdateUser(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "User updated successfully", nil, nil, nil)
 }
 
-// DELETE /users/:id
+// DeleteUser untuk menghapus user berdasarkan id nya.
 func (h *UserHandler) DeleteUser(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {

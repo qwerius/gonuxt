@@ -1,3 +1,4 @@
+// Package handler untuk endpoint profile
 package handler
 
 import (
@@ -33,9 +34,7 @@ type ProfileResponse struct {
 	UserID       int    `json:"user_id"`
 }
 
-// ---------------------------
-// GET /profiles/:id
-// ---------------------------
+// GetProfileByID untuk mendapatkan profile berdasarkan id user.
 func (h *ProfileHandler) GetProfileByID(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -81,9 +80,7 @@ func (h *ProfileHandler) GetProfileByID(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Profile retrieved successfully", p, nil, nil)
 }
 
-// ---------------------------
-// GET /profile
-// ---------------------------
+// GetMyProfile digunakan untuk mendapatkan profile yang login.
 func (h *ProfileHandler) GetMyProfile(c *fiber.Ctx) error {
 	// ambil user_id dari token (middleware nanti set ke locals)
 	userID := c.Locals("user_id")
@@ -130,9 +127,7 @@ func (h *ProfileHandler) GetMyProfile(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Profile retrieved successfully", p, nil, nil)
 }
 
-// ---------------------------
-// GET /profiles
-// ---------------------------
+// GetAllProfiles untuk mendapatkan semua profile.
 func (h *ProfileHandler) GetAllProfiles(c *fiber.Ctx) error {
 	pagination := utils.GetPagination(c, 1, 10, 100)
 
@@ -204,9 +199,7 @@ func (h *ProfileHandler) GetAllProfiles(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Profiles retrieved successfully", items, meta, links)
 }
 
-// ---------------------------
-// GET /users/:id/profile
-// ---------------------------
+// GetProfileByUserID untuk mendapatkan profile user berdasarkan id user.
 func (h *ProfileHandler) GetProfileByUserID(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -252,9 +245,7 @@ func (h *ProfileHandler) GetProfileByUserID(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Profile retrieved successfully", p, nil, nil)
 }
 
-// ---------------------------
-// POST /users/:id/profile
-// ---------------------------
+// CreateProfileRequest adalah model untuk membuat profile.
 type CreateProfileRequest struct {
 	Nama         string  `json:"nama"`
 	NamaBelakang *string `json:"nama_belakang"`
@@ -266,6 +257,24 @@ func (h *ProfileHandler) CreateProfileByUserID(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
 		return utils.Error(c, fiber.StatusBadRequest, "invalid user id")
+	}
+
+	// cek apakah sudah ada profil, karena ini harus unik
+	var existingProfileID int
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	err = h.DB.QueryRowContext(ctx, `
+		SELECT profile_id FROM user_profiles WHERE user_id = $1
+	`, userID).Scan(&existingProfileID)
+
+	if err == nil {
+		// profil sudah ada
+		return utils.Error(c, fiber.StatusForbidden, "Profile already exists, use PUT to update")
+	} else if err != sql.ErrNoRows {
+		// error lain
+		log.Printf("check existing profile: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "internal error")
 	}
 
 	// parse form-data (bukan JSON)
@@ -308,9 +317,6 @@ func (h *ProfileHandler) CreateProfileByUserID(c *fiber.Ctx) error {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
-	defer cancel()
-
 	var profileID int
 	err = h.DB.QueryRowContext(ctx, `
 		INSERT INTO profiles (nama, nama_belakang, tanggal_lahir, avatar, is_verified, created_at, updated_at)
@@ -336,9 +342,7 @@ func (h *ProfileHandler) CreateProfileByUserID(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Profile created successfully", map[string]int{"id": profileID}, nil, nil)
 }
 
-// ---------------------------
-// PUT /users/:id/profile
-// ---------------------------
+// UpdateProfileRequest model profile update yang diperlukan.
 type UpdateProfileRequest struct {
 	Nama         *string `json:"nama"`
 	NamaBelakang *string `json:"nama_belakang"`
@@ -442,9 +446,7 @@ func (h *ProfileHandler) UpdateProfileByUserID(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "Profile updated successfully", nil, nil, nil)
 }
 
-// ---------------------------
-// DELETE /users/:id/profile
-// ---------------------------
+// DeleteProfileByUserID untuk menghapus profile berdasarkan user id.
 func (h *ProfileHandler) DeleteProfileByUserID(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -454,7 +456,6 @@ func (h *ProfileHandler) DeleteProfileByUserID(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
-	// delete relation first
 	_, err = h.DB.ExecContext(ctx, "DELETE FROM user_profiles WHERE user_id = $1", userID)
 	if err != nil {
 		log.Printf("DeleteProfileByUserID relation: %v", err)
@@ -478,4 +479,88 @@ func (h *ProfileHandler) DeleteProfileByUserID(c *fiber.Ctx) error {
 	}
 
 	return utils.SuccessMessage(c, "Profile deleted successfully", nil, nil, nil)
+}
+
+// GetProfileByAdmin hanya bisa diakses admin, melihat profile user mana pun
+func (h *ProfileHandler) GetProfileByAdmin(c *fiber.Ctx) error {
+	// ambil param id profile yang ingin dilihat
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return utils.Error(c, fiber.StatusBadRequest, "invalid profile id")
+	}
+
+	// ambil user_id dari context (set oleh middleware Auth)
+	userIDLocal := c.Locals("user_id")
+	var userID int
+	switch v := userIDLocal.(type) {
+	case int:
+		userID = v
+	case int64:
+		userID = int(v)
+	case float64:
+		userID = int(v)
+	case string:
+		userID, err = strconv.Atoi(v)
+		if err != nil {
+			return utils.Error(c, fiber.StatusInternalServerError, "invalid user_id")
+		}
+	default:
+		return utils.Error(c, fiber.StatusInternalServerError, "invalid user_id type")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	// cek apakah user adalah admin dari tabel roles + user_roles
+	var isAdmin bool
+	err = h.DB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 
+			FROM roles r
+			JOIN user_roles ur ON ur.role_id = r.id
+			WHERE ur.user_id = $1 AND r.name = 'admin'
+		)
+	`, userID).Scan(&isAdmin)
+	if err != nil {
+		log.Printf("Check admin role: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "failed to check role")
+	}
+	if !isAdmin {
+		return utils.Error(c, fiber.StatusForbidden, "only admin can access this endpoint")
+	}
+
+	// ambil profile user berdasarkan id
+	var p ProfileResponse
+	var namaBelakang sql.NullString
+	var avatar sql.NullString
+	var createdAt, updatedAt sql.NullTime
+
+	err = h.DB.QueryRowContext(ctx, `
+		SELECT p.id, p.nama, p.nama_belakang, p.tanggal_lahir, p.avatar, p.is_verified,
+		       p.created_at, p.updated_at, up.user_id
+		FROM profiles p
+		LEFT JOIN user_profiles up ON up.profile_id = p.id
+		WHERE p.id = $1
+	`, id).Scan(
+		&p.ID, &p.Nama, &namaBelakang, &p.TanggalLahir, &avatar, &p.IsVerified,
+		&createdAt, &updatedAt, &p.UserID,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return utils.Error(c, fiber.StatusNotFound, "profile not found")
+		}
+		log.Printf("GetProfileByAdmin: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "failed to get profile")
+	}
+
+	if namaBelakang.Valid {
+		p.NamaBelakang = namaBelakang.String
+	}
+	if avatar.Valid {
+		p.Avatar = avatar.String
+	}
+	p.CreatedAt = createdAt.Time.Format(time.RFC3339)
+	p.UpdatedAt = updatedAt.Time.Format(time.RFC3339)
+
+	return utils.SuccessMessage(c, "Profile retrieved successfully", p, nil, nil)
 }

@@ -1,7 +1,9 @@
+// Package api berisi semua route dan pendaftaran middleware untuk API MyProject.
 package api
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/qwerius/gonuxt/internal/handler"
@@ -11,6 +13,7 @@ import (
 func RegisterRoutes(app *fiber.App, db *sql.DB) {
 
 	app.Use(middleware.CORS())
+	app.Use(middleware.CSRF())
 
 	// Handlers
 	userHandler := handler.NewUserHandler(db)
@@ -19,6 +22,14 @@ func RegisterRoutes(app *fiber.App, db *sql.DB) {
 	userRoleHandler := handler.NewUserRoleHandler(db)
 	profileHandler := handler.NewProfileHandler(db)
 	oauthHandler := handler.NewOAuthHandler(db)
+	auditHandler := handler.NewAuditHandler(db)
+	captchaHandler := handler.NewCaptchaHandler()
+
+	ipCfg := &middleware.IPFilterConfig{
+		Whitelist: []string{"127.0.0.1", "192.168.1.0/24"},
+		Blacklist: []string{"1.2.3.4"},
+	}
+	app.Use(middleware.IPFilterMiddleware(ipCfg))
 
 	// Root info
 	app.Get("/", func(c *fiber.Ctx) error {
@@ -26,58 +37,68 @@ func RegisterRoutes(app *fiber.App, db *sql.DB) {
 			"status":      "ok",
 			"api_name":    "MyProject API",
 			"version":     "1.0.0",
-			"endpoints":   []string{"/hello", "/apa", "/api/v1/users", "/api/v1/auth/login", "/api/v1/auth/register"},
 			"dokumentasi": "https://blueink.my.id",
 		})
 	})
 
-	// Simple non-API routes
-	app.Get("/hello", func(c *fiber.Ctx) error {
-		return c.SendString("Hello Fiber")
-	})
-	app.Get("/apa", func(c *fiber.Ctx) error {
-		return c.SendString("Apa tanya-tanya")
-	})
-
-	// API v1 group
 	api := app.Group("/api/v1")
+	users := api.Group("/users", middleware.AuthRequired,
+		middleware.RateLimit(middleware.RateLimitConfig{
+			Max:        30,
+			Expiration: time.Minute,
+		}))
 
-	// Auth routes (no middleware)
-	api.Post("/auth/login", authHandler.Login)
-	api.Post("/auth/register", authHandler.Register)
-	api.Post("/auth/refresh", authHandler.RefreshToken)
-	api.Post("/auth/forgot-password", handler.ForgotPassword(db))
-	api.Post("/auth/reset-password", handler.ResetPassword(db))
+	authLimit := middleware.RateLimit(middleware.RateLimitConfig{
+		Max:        5,
+		Expiration: time.Minute,
+	})
 
-	app.Get("/oauth/google/login", oauthHandler.GoogleLogin)
-	app.Get("/oauth/google/callback", oauthHandler.GoogleCallback)
+	api.Get("/captcha", captchaHandler.GenerateCaptcha)
 
-	// User routes (protected)
-	api.Get("/users", middleware.AuthRequired, userHandler.GetAllUsers)
-	api.Get("/users/:id", middleware.AuthRequired, userHandler.GetUserByID)
-	api.Post("/users", middleware.AuthRequired, userHandler.CreateUser)
-	api.Put("/users/:id", middleware.AuthRequired, userHandler.UpdateUser)
-	api.Delete("/users/:id", middleware.AuthRequired, userHandler.DeleteUser)
+	api.Post("/auth/login", authLimit, authHandler.Login)
+	api.Post("/auth/register", authLimit, authHandler.Register)
+	api.Post("/auth/refresh", authLimit, authHandler.RefreshToken)
+	api.Post("/auth/forgot-password", authLimit, handler.ForgotPassword(db))
+	api.Post("/auth/reset-password", authLimit, handler.ResetPassword(db))
 
-	api.Get("/roles", roleHandler.GetAllRoles)
-	api.Get("/roles/:id", roleHandler.GetRoleByID)
-	api.Delete("/roles/:id", roleHandler.DeleteRole)
-	api.Post("/roles", roleHandler.CreateRole)
+	api.Get("/oauth/google/login", oauthHandler.GoogleLogin)
+	api.Get("/oauth/google/callback", oauthHandler.GoogleCallback)
 
-	api.Get("/users/:id/roles", userRoleHandler.GetUserRoles)
-	api.Put("/users/:id/role", userRoleHandler.UpdateUserRole)
-	api.Post("/users/:id/roles", userRoleHandler.AssignRole)
-	api.Delete("/users/:id/roles/:roleId", userRoleHandler.RemoveRole)
+	users.Get("/", userHandler.GetAllUsers)
+	users.Get("/:id", userHandler.GetUserByID)
+	users.Post("/", middleware.AuthRequired, userHandler.CreateUser)
+	users.Put("/:id", middleware.AuthRequired, userHandler.UpdateUser)
+	users.Delete("/:id", middleware.AuthRequired, userHandler.DeleteUser)
 
-	api.Get("/profiles/:id", middleware.AuthRequired, profileHandler.GetProfileByID)
+	api.Get("/roles", middleware.AuthRequired, middleware.AdminOnly(db), roleHandler.GetAllRoles)
+	api.Get("/roles/:id", middleware.AuthRequired, middleware.AdminOnly(db), roleHandler.GetRoleByID)
+	api.Delete("/roles/:id", middleware.AuthRequired, middleware.AdminOnly(db), roleHandler.DeleteRole)
+	api.Post("/roles", middleware.AuthRequired, middleware.AdminOnly(db), roleHandler.CreateRole)
+
+	api.Get("/users/:id/roles", middleware.AuthRequired, middleware.AdminOnly(db), userRoleHandler.GetUserRoles)
+	api.Put("/users/:id/role", middleware.AuthRequired, middleware.AdminOnly(db), userRoleHandler.UpdateUserRole)
+	api.Post("/users/:id/roles", middleware.AuthRequired, middleware.AdminOnly(db), userRoleHandler.AssignRole)
+	api.Delete("/users/:id/roles/:roleId", middleware.AuthRequired, middleware.AdminOnly(db), userRoleHandler.RemoveRole)
+	api.Get("/role", middleware.AuthRequired, middleware.AuthRequired, roleHandler.GetMyRole)
+
+	api.Get("/profiles/:id", middleware.AuthRequired, middleware.AdminOnly(db), profileHandler.GetProfileByID)
 	api.Get("/profiles", middleware.AuthRequired, profileHandler.GetAllProfiles)
 	api.Get("/profile", middleware.AuthRequired, profileHandler.GetMyProfile)
-	// ----------------------------
-	// Profile by user_id
-	// ----------------------------
+
 	api.Get("/users/:id/profile", middleware.AuthRequired, profileHandler.GetProfileByUserID)
-	api.Post("/users/:id/profile", middleware.AuthRequired, profileHandler.CreateProfileByUserID)
-	api.Put("/users/:id/profile", middleware.AuthRequired, profileHandler.UpdateProfileByUserID)
-	api.Delete("/users/:id/profile", middleware.AuthRequired, profileHandler.DeleteProfileByUserID)
+	api.Post("/users/:id/profile", middleware.AuthRequired, middleware.OwnerOrAdminMiddleware(), profileHandler.CreateProfileByUserID)
+	api.Put("/users/:id/profile", middleware.AuthRequired, middleware.OwnerOrAdminMiddleware(), profileHandler.UpdateProfileByUserID)
+	api.Delete("/users/:id/profile", middleware.AuthRequired, middleware.OwnerOrAdminMiddleware(), profileHandler.DeleteProfileByUserID)
+
+	api.Get("/admin/profile/:id", middleware.AuthRequired, profileHandler.GetProfileByAdmin)
+
+	auditCfg := &middleware.AuditConfig{DB: db}
+
+	api.Get("/audit-logs",
+		middleware.AuthRequired,                     // pastikan user ada di context
+		middleware.AdminOnly(db),                    // harus admin
+		middleware.AuditLoggingMiddleware(auditCfg), // catat audit log
+		auditHandler.GetAuditLogs,                   // handler untuk menampilkan log
+	)
 
 }

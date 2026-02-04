@@ -1,3 +1,4 @@
+// Package handler forgot-password dilengkap captcha
 package handler
 
 import (
@@ -6,21 +7,33 @@ import (
 	"log"
 	"net/smtp"
 
-
 	"github.com/gofiber/fiber/v2"
-	"github.com/qwerius/gonuxt/internal/utils"
 	"github.com/qwerius/gonuxt/internal/config"
+	"github.com/qwerius/gonuxt/internal/store"
+	"github.com/qwerius/gonuxt/internal/utils"
 )
 
 func ForgotPassword(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		type Request struct {
-			Email string `json:"email"`
+			Email         string `json:"email"`
+			CaptchaID     string `json:"captcha_id"`
+			CaptchaAnswer string `json:"captcha_answer"`
 		}
 		var req Request
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 		}
+
+		// ===== Tambahkan verifikasi captcha di sini =====
+		if req.CaptchaID == "" || req.CaptchaAnswer == "" {
+			return utils.Error(c, fiber.StatusBadRequest, "Captcha is required")
+		}
+
+		if !store.Store.Verify(req.CaptchaID, req.CaptchaAnswer) {
+			return utils.Error(c, fiber.StatusBadRequest, "Captcha salah atau kadaluarsa")
+		}
+		// =================================================
 
 		// cek email ada di DB
 		var userID int

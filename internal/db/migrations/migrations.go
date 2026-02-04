@@ -19,4 +19,5 @@ var Migrations = []Migration{
 	Migration009ReassignAdminToSuweri,
 	Migration010Profiles,
 	Migration011UserProfiles,
+	Migration012CreateAuditLogs,
 }

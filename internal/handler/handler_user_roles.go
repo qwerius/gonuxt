@@ -29,9 +29,7 @@ type AssignRoleRequest struct {
 	RoleID int `json:"role_id"`
 }
 
-// ============================
-// GET /users/:id/roles
-// ============================
+// GetUserRoles untuk mendapatkan role berdasarkan user id.
 func (h *UserRoleHandler) GetUserRoles(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -94,10 +92,7 @@ func (h *UserRoleHandler) GetUserRoles(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "user roles retrieved successfully", items, meta, links)
 }
 
-// ============================
-// PUT /users/:id/role
-// replace role user (user wajib punya role)
-// ============================
+// UpdateUserRole untuk update role berdasarkan user id.
 func (h *UserRoleHandler) UpdateUserRole(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -145,10 +140,7 @@ func (h *UserRoleHandler) UpdateUserRole(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "user role updated successfully", nil, nil)
 }
 
-// ============================
-// POST /users/:id/roles
-// assign role baru (optional)
-// ============================
+// AssignRole untuk memasukan role berdasarkan user id.
 func (h *UserRoleHandler) AssignRole(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -177,10 +169,7 @@ func (h *UserRoleHandler) AssignRole(c *fiber.Ctx) error {
 	return utils.SuccessMessage(c, "role assigned successfully", nil, nil)
 }
 
-// ============================
-// DELETE /users/:id/roles/:roleId
-// optional (kalau kamu mau remove role tertentu)
-// ============================
+// RemoveRole untuk menghapus role :roleId berdasarkan id user.
 func (h *UserRoleHandler) RemoveRole(c *fiber.Ctx) error {
 	userID, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -210,4 +199,58 @@ func (h *UserRoleHandler) RemoveRole(c *fiber.Ctx) error {
 	}
 
 	return utils.SuccessMessage(c, "role removed successfully", nil, nil)
+}
+
+// GetMyRole untuk mendapatkan role yang login.
+func (h *UserRoleHandler) GetMyRole(c *fiber.Ctx) error {
+	userIDStr := c.Cookies("user_id")
+	if userIDStr == "" {
+		return utils.Error(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		return utils.Error(c, fiber.StatusUnauthorized, "invalid user cookie")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	rows, err := h.DB.QueryContext(ctx,
+		`SELECT r.name
+		 FROM roles r
+		 JOIN user_roles ur ON ur.role_id = r.id
+		 WHERE ur.user_id = $1
+		 ORDER BY r.id`,
+		userID,
+	)
+	if err != nil {
+		log.Printf("GetMyRole: failed to query roles: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "failed to get roles")
+	}
+	defer rows.Close()
+
+	roles := []string{}
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			log.Printf("GetMyRole: scan error: %v", err)
+			return utils.Error(c, fiber.StatusInternalServerError, "failed to read roles")
+		}
+		roles = append(roles, role)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("GetMyRole: rows error: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "failed to read roles")
+	}
+
+	if len(roles) == 0 {
+		return utils.Error(c, fiber.StatusNotFound, "user has no role")
+	}
+
+	return utils.SuccessMessage(c, "my roles retrieved successfully", UserRoleResponse{
+		UserID: userID,
+		Roles:  roles,
+	}, nil)
 }

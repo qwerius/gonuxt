@@ -23,3 +23,21 @@ func CORS() fiber.Handler {
 		MaxAge:           300, // Cache preflight 5 menit
 	})
 }
+
+func SecureHeaders() fiber.Handler {
+	env := os.Getenv("ENV")
+
+	return func(c *fiber.Ctx) error {
+		c.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("X-Frame-Options", "DENY")
+
+		csp := "default-src * 'unsafe-inline' 'unsafe-eval';"
+		if env == "production" {
+			csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+		}
+		c.Set("Content-Security-Policy", csp)
+
+		return c.Next()
+	}
+}

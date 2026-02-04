@@ -185,3 +185,50 @@ func (h *RoleHandler) CreateRole(c *fiber.Ctx) error {
 
 	return utils.SuccessMessage(c, "role created successfully", role, nil)
 }
+
+// GetMyRole GET /role
+func (h *RoleHandler) GetMyRole(c *fiber.Ctx) error {
+	// ambil user_id dari Locals
+	userIDAny := c.Locals("user_id")
+	if userIDAny == nil {
+		return utils.Error(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	userID, ok := userIDAny.(int)
+	if !ok {
+		return utils.Error(c, fiber.StatusUnauthorized, "invalid user context")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	rows, err := h.DB.QueryContext(ctx,
+		`SELECT r.id, r.name
+		 FROM roles r
+		 JOIN user_roles ur ON ur.role_id = r.id
+		 WHERE ur.user_id = $1
+		 ORDER BY r.id`,
+		userID,
+	)
+	if err != nil {
+		log.Printf("GetMyRole: failed to query roles: %v", err)
+		return utils.Error(c, fiber.StatusInternalServerError, "failed to get roles")
+	}
+	defer rows.Close()
+
+	roles := []RoleResponse{}
+	for rows.Next() {
+		var r RoleResponse
+		if err := rows.Scan(&r.ID, &r.Name); err != nil {
+			log.Printf("GetMyRole: scan error: %v", err)
+			return utils.Error(c, fiber.StatusInternalServerError, "failed to read roles")
+		}
+		roles = append(roles, r)
+	}
+
+	if len(roles) == 0 {
+		return utils.Error(c, fiber.StatusNotFound, "user has no role")
+	}
+
+	return utils.SuccessMessage(c, "my roles retrieved successfully", roles, nil, nil)
+}

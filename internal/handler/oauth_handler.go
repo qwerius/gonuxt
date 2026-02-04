@@ -31,7 +31,7 @@ const (
 
 type GoogleTokenResponse struct {
 	AccessToken string `json:"access_token"`
-	IdToken     string `json:"id_token"`
+	IDToken     string `json:"id_token"`
 	ExpiresIn   int    `json:"expires_in"`
 }
 
@@ -43,9 +43,7 @@ type GoogleUserResponse struct {
 	Picture       string `json:"picture"`
 }
 
-// ---------------------------
-// GET /oauth/google/login
-// ---------------------------
+// GoogleLogin untuk mendapakan login dari google
 func (h *OAuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	params := url.Values{}
 	params.Add("client_id", config.Get("GOOGLE_CLIENT_ID"))
@@ -59,9 +57,7 @@ func (h *OAuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	return c.Redirect(redirectURL, fiber.StatusTemporaryRedirect)
 }
 
-// ---------------------------
-// GET /oauth/google/callback
-// ---------------------------
+// GoogleCallback  mendapatkan callback dari google
 func (h *OAuthHandler) GoogleCallback(c *fiber.Ctx) error {
 	code := c.Query("code")
 	if code == "" {
